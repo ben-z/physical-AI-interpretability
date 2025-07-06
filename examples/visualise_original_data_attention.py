@@ -16,8 +16,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.policies.factory import make_policy
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.policies.factory import make_policy
 from lerobot.configs.policies import PreTrainedConfig
 
 from src.attention_maps import ACTPolicyWithAttention
