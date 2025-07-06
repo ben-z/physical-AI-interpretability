@@ -75,20 +75,25 @@ def encode_video_ffmpeg(frames, output_filename, fps, pix_fmt_in="bgr24"):
     except Exception as e:
         print(f"An unexpected error occurred during video encoding for {output_filename}: {e}")
 
-def load_policy(policy_path: str, dataset_meta, policy_overrides: list = None) -> Tuple[torch.nn.Module, dict]:
+def load_policy(policy_path: str, dataset_meta, policy_overrides: list = None, force_per_frame_attention: bool = False) -> Tuple[torch.nn.Module, dict]:
     """Load and initialize a policy from checkpoint."""
     
-    # Load regular LeRobot policy
+    # Convert list of "key=value" strings to dict
+    overrides = {}
     if policy_overrides:
-        # Convert list of "key=value" strings to dict
-        overrides = {}
         for override in policy_overrides:
             key, value = override.split('=', 1)
             overrides[key] = value
-        policy_cfg = PreTrainedConfig.from_pretrained(policy_path, **overrides)
-    else:
-        policy_cfg = PreTrainedConfig.from_pretrained(policy_path)
-        policy_cfg.pretrained_path = policy_path
+            
+    # For per-frame attention analysis, we need to see the attention at each step.
+    # The ACT policy predicts action 'chunks'. We set chunk_size to 1 to force
+    # the policy to re-evaluate on every frame, giving us attention maps for each one.
+    if force_per_frame_attention and 'chunk_size' not in overrides:
+        print("Forcing policy chunk_size to 1 for per-frame attention analysis.")
+        overrides['chunk_size'] = 1
+    
+    policy_cfg = PreTrainedConfig.from_pretrained(policy_path, **overrides)
+    policy_cfg.pretrained_path = policy_path
 
     # NOTE: policy has to be an ACT policy for this to work
     policy = make_policy(policy_cfg, ds_meta=dataset_meta)
@@ -167,7 +172,8 @@ def analyze_episode(dataset: LeRobotDataset,
                    episode_id: int,
                    device: torch.device,
                    output_dir: str,
-                   model_dtype: torch.dtype = torch.float32) -> Dict:
+                   model_dtype: torch.dtype = torch.float32,
+                   force_per_frame_attention: bool = False) -> Dict:
     """
     Run policy inference on an episode and analyze proprioceptive importance.
     
@@ -226,6 +232,12 @@ def analyze_episode(dataset: LeRobotDataset,
                 
         # Prepare observation for policy (with debug on first frame)
         observation = prepare_observation_for_policy(frame, device, model_dtype, debug=(i==0))
+
+        # If forcing per-frame analysis, reset the policy's internal state to
+        # ensure it doesn't use a buffered action. This forces a full forward
+        # pass, which is required to capture the attention maps at every timestep.
+        if force_per_frame_attention and hasattr(policy, 'reset'):
+            policy.reset()
                 
         # Run policy inference
         with torch.inference_mode():
@@ -321,6 +333,8 @@ def main():
     parser.add_argument("--model-dtype", type=str, default="float32",
                         choices=["float32", "float16", "bfloat16"],
                         help="Model data type")
+    parser.add_argument("--force-per-frame-attention", action="store_true",
+                        help="Force policy to run inference on every frame for full-length attention videos.")
     
     args = parser.parse_args()
     
@@ -364,7 +378,8 @@ def main():
         policy, policy_cfg = load_policy(
             args.policy_path,
             dataset.meta,
-            args.policy_overrides
+            args.policy_overrides,
+            force_per_frame_attention=args.force_per_frame_attention
         )
         
         if hasattr(policy, 'model'):
@@ -392,7 +407,8 @@ def main():
                 episode_id=episode_id,
                 device=device,
                 output_dir=args.output_dir,
-                model_dtype=model_dtype
+                model_dtype=model_dtype,
+                force_per_frame_attention=args.force_per_frame_attention
             )
             all_results.append(results)
             print(f"Episode {episode_id} analysis completed successfully")

@@ -49,6 +49,11 @@ class ACTPolicyWithAttention:
         not self.policy.model.decoder.layers:
             raise AttributeError("Policy model structure does not match expected ACT architecture for target_layer.")
         self.target_layer = self.policy.model.decoder.layers[-1].multihead_attn
+
+    def reset(self):
+        """Resets the internal state of the wrapped policy."""
+        if hasattr(self.policy, 'reset'):
+            self.policy.reset()
         
     def select_action(self, observation: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor, List[np.ndarray]]:
         """
